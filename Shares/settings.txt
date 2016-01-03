@@ -1,0 +1,1 @@
+{"riseSearchPeriodInDays":22,"fallSearchPeriodInDays":4,"requiredChangeRate":8.0,"numerOfRepeats":3}
