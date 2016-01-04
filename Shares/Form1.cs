@@ -17,6 +17,16 @@ namespace Shares
 {
     public partial class Form1 : Form
     {
+        private enum GraphMarkerType
+        {
+            Split,
+            SimpleSarch
+        }
+
+        static readonly Color GraphColour_Normanlised = Color.Blue;
+        static readonly Color GraphColour_Raw         = Color.Green;
+        static readonly Color GraphColour_Splits      = Color.Blue;
+
         Dictionary<string,List<Price>> shareData = new Dictionary<string, List<Price>>();
         Dictionary<string, List<SplitEvent>> splitData = new Dictionary<string, List<SplitEvent>>();
         SimpleSearchSettings simpleSearchSettings = new SimpleSearchSettings();
@@ -44,45 +54,64 @@ namespace Shares
 
             this.symbols = ShareIndexReader.GetSymbols("https://s3.amazonaws.com/quandl-static-content/Ticker+CSV%27s/Indicies/FTSE100.csv");
             this.cbSelectSymbol.Items.AddRange(symbols.ToArray());
-            this.cbSimpleSearchSymbol.Items.AddRange(symbols.ToArray());
-
             this.cbSelectSymbol.SelectedIndex = symbols.ToList().IndexOf("VOD.L");
-            this.cbSimpleSearchSymbol.SelectedIndex = symbols.ToList().IndexOf("VOD.L");
 
-            string symbol = this.cbSimpleSearchSymbol.SelectedItem as string;
-            DisplayGraph(HistoricalPriceReader.Convert(this.GetShareData(symbol), this.GetSplitData(symbol)), zedGraphControl1);
+            this.cbGraphDisplay.SelectedIndex = 0;
+
+            zedGraphControl1.GraphPane.Title.IsVisible = false;
+
+            string symbol = this.cbSelectSymbol.SelectedItem as string;
+            DisplayGraph(this.GetShareData(symbol), this.GetSplitData(symbol));
+            PopulateSplitListView(this.GetSplitData(symbol));
+        }   
+
+        private void DisplayGraph(IEnumerable<Price> data, IEnumerable<SplitEvent> splits)
+        {
+            zedGraphControl1.GraphPane.CurveList.Clear();
+            zedGraphControl1.GraphPane.GraphObjList.RemoveAll(s => (GraphMarkerType)s.Tag == GraphMarkerType.Split);
+
+            if (cbGraphDisplay.SelectedIndex != -1 && cbGraphDisplay.SelectedItem.ToString().Contains("Raw"))
+            {
+                LineItem shareLine = zedGraphControl1.GraphPane.AddCurve("Raw", 
+                                                                          data.Select(d => (double)new XDate(d.date)).ToArray(), 
+                                                                          data.Select(d => (double)d.closePrice).ToArray(), 
+                                                                          GraphColour_Raw);
+                shareLine.Symbol.Type = SymbolType.None;
+            }
+            if (cbGraphDisplay.SelectedIndex != -1 && cbGraphDisplay.SelectedItem.ToString().Contains("Normalised"))
+            {
+                LineItem shareLine = zedGraphControl1.GraphPane.AddCurve("Normalised",
+                                                                          data.Select(d => (double)new XDate(d.date)).ToArray(),
+                                                                          HistoricalPriceReader.Convert(data, splits).Select(d => (double)d.closePrice).ToArray(),
+                                                                          GraphColour_Normanlised);
+                shareLine.Symbol.Type = SymbolType.None;
+            }
+
+            zedGraphControl1.GraphPane.XAxis.Title.Text = "Date";
+            zedGraphControl1.GraphPane.XAxis.Type = AxisType.Date;
+            zedGraphControl1.GraphPane.XAxis.Scale.Format = "dd-MM-yy";
+            zedGraphControl1.GraphPane.XAxis.Scale.MajorUnit = DateUnit.Year;
+            zedGraphControl1.GraphPane.XAxis.Scale.MajorStep = 1;
+            zedGraphControl1.GraphPane.XAxis.Scale.MinorUnit = DateUnit.Day;
+            zedGraphControl1.GraphPane.XAxis.Scale.MinorStep = 1;
+            zedGraphControl1.GraphPane.XAxis.Scale.Min = (double)new XDate(data.First().date);
+            zedGraphControl1.GraphPane.XAxis.Scale.Max = (double)new XDate(data.Last().date);
+            zedGraphControl1.GraphPane.YAxis.Title.Text = "Close Price";
+            zedGraphControl1.AxisChange();
+
+            if (cbSplitsShowOnGraph.Checked)
+            {
+                foreach (var s in splits)
+                    AddMarker(zedGraphControl1, s.date, GraphColour_Splits, GraphMarkerType.Split);
+            }
+
+            zedGraphControl1.Invalidate();
         }
 
-        private void DisplayGraph(IEnumerable<Price> data, ZedGraphControl gc)
+        private void ClearGraph()
         {
-            gc.GraphPane.CurveList.Clear();
-
-            var xAxis = data.Select(d => (double)new XDate(d.date));
-            var yAxis = data.Select(d => (double)d.closePrice);
-            double maxy = yAxis.Max();
-
-            LineItem shareLine = gc.GraphPane.AddCurve("data", xAxis.ToArray(), yAxis.ToArray(), Color.Blue);
-            shareLine.Symbol.Type = SymbolType.None;
-
-            gc.GraphPane.XAxis.Title.Text = "Date";
-            gc.GraphPane.XAxis.Type = AxisType.Date;
-            gc.GraphPane.XAxis.Scale.Format = "dd-MM-yy";
-            gc.GraphPane.XAxis.Scale.MajorUnit = DateUnit.Year;
-            gc.GraphPane.XAxis.Scale.MajorStep = 1;
-            gc.GraphPane.XAxis.Scale.MinorUnit = DateUnit.Day;
-            gc.GraphPane.XAxis.Scale.MinorStep = 1;
-            gc.GraphPane.XAxis.Scale.Min = (double)xAxis.First();
-            gc.GraphPane.XAxis.Scale.Max = (double)xAxis.Last();
-            gc.GraphPane.YAxis.Title.Text = "Close Price";
-
-            //AddRegion((double)new XDate(2002, 3, 27), (double)new XDate(2002, 4, 10), Color.LightBlue);
-            //AddRegion((double)new XDate(2002, 4, 17), (double)new XDate(2002, 7, 17), Color.LightBlue);
-            //AddRegion((double)new XDate(2002, 8, 05), (double)new XDate(2002, 8, 13), Color.LightBlue);
-            //AddRegion((double)new XDate(2002, 8, 23), (double)new XDate(2002, 11, 26), Color.LightBlue);
-            //AddRegion((double)new XDate(2003, 1, 29), (double)new XDate(2003, 3, 18), Color.LightBlue);
-
-            gc.AxisChange();
-            gc.Invalidate();
+            zedGraphControl1.GraphPane.CurveList.Clear();
+            zedGraphControl1.GraphPane.GraphObjList.RemoveAll(s => true);
         }
 
         private void AddRegion(double x1, double x2, Color lightBlue)
@@ -94,9 +123,13 @@ namespace Shares
             zedGraphControl1.GraphPane.GraphObjList.Add(box);
         }
 
-        private void splitContainer1_Panel1_Paint(object sender, PaintEventArgs e)
+        private void AddMarker(ZedGraphControl gc, DateTime date, Color color, GraphMarkerType markerType)
         {
-
+            var ymax = gc.GraphPane.YAxis.Scale.Max;
+            LineObj line = new LineObj(color, (double)new XDate(date), (double)0, (double)new XDate(date), ymax);
+            line.Tag = markerType;
+            line.ZOrder = ZOrder.E_BehindCurves;
+            gc.GraphPane.GraphObjList.Add(line);
         }
 
         private void btnGo_Click(object sender, EventArgs e)
@@ -109,7 +142,7 @@ namespace Shares
             settings.requiredChangeRate = decimal.Parse(tbRateChange.Text);
             settings.numerOfRepeats = int.Parse(tbRepeats.Text);
 
-            string symbol = cbSimpleSearchSymbol.SelectedItem as string;
+            string symbol = cbSelectSymbol.SelectedItem as string;
             IEnumerable<Price> data = this.GetShareData(symbol);
             IEnumerable<SplitEvent> splitData = this.GetSplitData(symbol);
             data = HistoricalPriceReader.Convert(data, splitData).ToArray();
@@ -130,18 +163,18 @@ namespace Shares
                 for (int i = 0; i < items.Count; i++)
                 {
                     if (i == (items.Count - 1) && items[i].state == ResultState.FailedFindingSellPoint)
-                        AddMarker(zedGraphControl1, items[i].buy.date, Color.Red);
+                        AddMarker(zedGraphControl1, items[i].buy.date, Color.Red, GraphMarkerType.SimpleSarch);
                     else if (i == 0)
-                        AddMarker(zedGraphControl1, items[i].buy.date, Color.DarkBlue);
+                        AddMarker(zedGraphControl1, items[i].buy.date, Color.DarkBlue, GraphMarkerType.SimpleSarch);
                     else
-                        AddMarker(zedGraphControl1, items[i].buy.date, Color.Blue);
+                        AddMarker(zedGraphControl1, items[i].buy.date, Color.Blue, GraphMarkerType.SimpleSarch);
 
                     if (items[i].state == ResultState.OK)
                     {
                         if (i == (items.Count - 1))
-                            AddMarker(zedGraphControl1, items[i].sell.date, Color.LightGreen);
+                            AddMarker(zedGraphControl1, items[i].sell.date, Color.LightGreen, GraphMarkerType.SimpleSarch);
                         else
-                            AddMarker(zedGraphControl1, items[i].sell.date, Color.Green);
+                            AddMarker(zedGraphControl1, items[i].sell.date, Color.Green, GraphMarkerType.SimpleSarch);
                     }
                 }
 
@@ -156,33 +189,21 @@ namespace Shares
             zedGraphControl1.Invalidate();
         }
 
-        private void AddMarker(ZedGraphControl gc, DateTime date, Color color)
-        {
-            var ymax = gc.GraphPane.YAxis.Scale.Max;
-            LineObj line = new LineObj(color, (double)new XDate(date), (double)0, (double)new XDate(date), ymax);
-            line.ZOrder = ZOrder.E_BehindCurves;
-            gc.GraphPane.GraphObjList.Add(line);
-        }
-
         private void PopulateSplitListView(IEnumerable<SplitEvent> splits)
         {
-            gcSplits.GraphPane.GraphObjList.RemoveAll(s => true);
             lvSplits.Items.Clear();
             lvSplits.BeginUpdate();
             foreach (var s in splits)
             {
                 ListViewItem items = new ListViewItem();
-                items.Text = s.date.ToString("dd/MM/yy");
-                items.SubItems.Add((s.originalShares / 10000.0).ToString("0.00"));
-                items.SubItems.Add((s.newShareAllocation / 10000.0).ToString("0.00"));
+                items.Text = s.date.ToString("dd/MM/yyyy");
+                items.SubItems.Add(s.originalShares.ToString());
+                items.SubItems.Add(s.newShareAllocation.ToString());
                 items.SubItems.Add(s.cumalitveAdjustment.ToString("0.0000"));
                 items.Tag = s;
                 lvSplits.Items.Add(items);
-
-                AddMarker(gcSplits, s.date, Color.Blue);
             }
             lvSplits.EndUpdate();
-            gcSplits.Invalidate();
         }
 
         private void btSaveSimpleSearchSettings_Click(object sender, EventArgs e)
@@ -212,7 +233,7 @@ namespace Shares
             int currentFailedSells, bestFailedSells;
             int currentOkSells, bestOkSells;
             Random rnd = new Random();
-            string symbol = cbSimpleSearchSymbol.SelectedItem as string;
+            string symbol = cbSelectSymbol.SelectedItem as string;
             Price[] data = HistoricalPriceReader.Convert(this.GetShareData(symbol), this.GetSplitData(symbol)).ToArray();
 
             bestSettings = this.simpleSearchSettings;
@@ -268,25 +289,35 @@ namespace Shares
 
         private void cbSelectSymbol_SelectedIndexChanged(object sender, EventArgs e)
         {
+            Cursor.Current = Cursors.WaitCursor;
+            this.Enabled = false;
             string symbol = cbSelectSymbol.SelectedItem as string;
-            DisplayGraph(this.GetShareData(symbol), gcSplits);
+            ClearGraph();
+            DisplayGraph(this.GetShareData(symbol), this.GetSplitData(symbol));
             PopulateSplitListView(this.GetSplitData(symbol));
+            this.Enabled = true;
+            Cursor.Current = Cursors.Default;
         }
 
-        private void cbSimpleSearchSymbol_SelectedIndexChanged(object sender, EventArgs e)
+        private void CbGraphDisplay_SelectedIndexChanged(object sender, System.EventArgs e)
         {
             string symbol = cbSelectSymbol.SelectedItem as string;
-            DisplayGraph(this.GetShareData(symbol), gcSplits);
-            PopulateSplitListView(this.GetSplitData(symbol));
+            DisplayGraph(this.GetShareData(symbol), this.GetSplitData(symbol));
+        }
+
+        private void cbSplitsShowOnGraph_Click(object sender, EventArgs e)
+        {
+            string symbol = cbSelectSymbol.SelectedItem as string;
+            DisplayGraph(this.GetShareData(symbol), this.GetSplitData(symbol));
         }
 
         private IEnumerable<Price> GetShareData(string symbol)
         {
             List<Price> data;
             if (!this.shareData.TryGetValue(symbol, out data))
-            { 
-                this.shareData[symbol] = HistoricalPriceReader.Get(symbol).ToList();
-                data = this.shareData[symbol];
+            {
+                data = HistoricalPriceReader.Get(symbol).ToList();
+                this.shareData[symbol] = data;
             }
             return data;
         }
@@ -296,21 +327,10 @@ namespace Shares
             List<SplitEvent> data;
             if (!this.splitData.TryGetValue(symbol, out data))
             {
-                this.splitData[symbol] = HistoricalPriceReader.GetSplitEvents(symbol, this.GetShareData(symbol).Select(s => s.date).Min()).ToList();
-                data = this.splitData[symbol];
+                data = HistoricalPriceReader.GetSplitEvents(symbol, this.GetShareData(symbol).Select(s => s.date).Min()).ToList();
+                this.splitData[symbol] = data;
             }
             return data;
-        }
-
-        private void btnSplitRemove_Click(object sender, EventArgs e)
-        {
-            foreach (var i in lvSplits.SelectedIndices.OfType<int>().Reverse().ToList())
-            {
-                lvSplits.Items.RemoveAt(i);
-                gcSplits.GraphPane.GraphObjList.RemoveAt(i);
-            }
-
-            gcSplits.Invalidate();
         }
     }
 }

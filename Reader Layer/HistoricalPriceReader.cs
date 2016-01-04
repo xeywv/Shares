@@ -95,32 +95,53 @@ namespace Reader_Layer
 
             using (WebBrowserAdv webBrowser = new WebBrowserAdv())
             {
-                if (!webBrowser.Navigate(5000, url))
-                    throw new ApplicationException("Failed navigating to " + url);
+                HtmlAgilityPack.HtmlNodeCollection splitNodes = null;
+                int tries = 0;
+                bool found = false;
 
-                var doc = webBrowser.GetHtmlAgilityPackDocument();
-
-                foreach (var td in doc.DocumentNode.SelectNodes(".//td[contains(text(),'Stock Split')]"))
+                while (tries < 3 && !found)
                 {
                     try
                     {
-                        var dateStr = td.ParentNode.ChildNodes[0].InnerText;
-                        var ratio = td.InnerText.Replace("\n", "").Replace(" ", "").Split(new[] { "Stock" }, StringSplitOptions.RemoveEmptyEntries)[0].Split(':');
-                        var sharesBefore = ratio[0];
-                        var sharesAfter = ratio[1];
+                        if (!webBrowser.Navigate(5000, url))
+                            throw new ApplicationException("Failed navigating to " + url);
 
-                        splits.Add(new SplitEvent(DateTime.Parse(dateStr), int.Parse(sharesBefore), int.Parse(sharesAfter)));
+                        splitNodes = webBrowser.GetHtmlAgilityPackDocument().DocumentNode.SelectNodes(".//td[contains(text(),'Stock Split')]");
+                        found = webBrowser.GetHtmlAgilityPackDocument().DocumentNode.SelectNodes(".//th[text()='Prices']") != null;
                     }
                     catch (Exception ex)
                     {
-                        throw new ApplicationException("Failed reading split", ex);
-                    }                    
+                        if (tries++ >= 3)
+                            throw ex;
+                        System.Threading.Thread.Sleep(1000);
+                    }
+                }
+
+                if (splitNodes != null)
+                { 
+                    foreach (var td in splitNodes)
+                    {
+                        try
+                        {
+                            var dateStr = td.ParentNode.ChildNodes[0].InnerText;
+                            var ratio = td.InnerText.Replace("\n", "").Replace(" ", "").Split(new[] { "Stock" }, StringSplitOptions.RemoveEmptyEntries)[0].Split(':');
+                            var sharesBefore = ratio[0];
+                            var sharesAfter = ratio[1];
+
+                            splits.Add(new SplitEvent(DateTime.Parse(dateStr), int.Parse(sharesBefore), int.Parse(sharesAfter)));
+                        }
+                        catch (Exception ex)
+                        {
+                            throw new ApplicationException("Failed reading split", ex);
+                        }                    
+                    }
                 }
             }
 
             splits.Add(new SplitEvent(DateTime.MaxValue, 1, 1));
+            splits.CalculateCumalitveAdjustment();
 
-            return splits;
+            return splits.OrderBy(d => d.date);
         }
 
         public static IEnumerable<Price> Convert(IEnumerable<Price> shareData, IEnumerable<SplitEvent> splits)
@@ -130,7 +151,7 @@ namespace Reader_Layer
 
             foreach (var d in shareData.Skip(1))
             {
-                if (splits.ElementAt(cumaltiveUpdateIndex).date < d.date)
+                if (splits.ElementAt(cumaltiveUpdateIndex).date <= d.date)
                 {
                     cumaltiveUpdateIndex++;
                     cumaltiveAdj = splits.ElementAt(cumaltiveUpdateIndex).cumalitveAdjustment;
